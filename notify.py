@@ -25,21 +25,16 @@ def get_gold_price():
     )
     res.raise_for_status()
 
-    html = html_lib.unescape(res.text)
-
-    text = re.sub(r"<[^>]+>", " ", html)
+    raw_html = html_lib.unescape(res.text)
+    text = re.sub(r"<[^>]+>", " ", raw_html)
     text = re.sub(r"\s+", " ", text)
 
     def find_price(k):
         pattern = rf"ราคาทองต่อกรัม\s*{k}\s*฿\s*([\d,]+\.\d+)"
         match = re.search(pattern, text, re.IGNORECASE)
+        return f"฿ {match.group(1)}" if match else "ไม่พบ"
 
-        if match:
-            return f"฿ {match.group(1)}"
-
-        return "ไม่พบ"
-
-    return f"""📊 แจ้งเตือนราคาทองต่อกรัมประจำวัน
+    return f"""📊 ราคาทองต่อกรัมล่าสุด
 
 24K: {find_price("24K")}
 22K: {find_price("22K")}
@@ -56,6 +51,9 @@ def get_gold_price():
 
 
 def push_line_message(text):
+    print("TOKEN EXISTS:", bool(LINE_CHANNEL_ACCESS_TOKEN))
+    print("USER ID EXISTS:", bool(LINE_USER_ID))
+
     if not LINE_CHANNEL_ACCESS_TOKEN:
         raise RuntimeError("Missing LINE_CHANNEL_ACCESS_TOKEN")
 
