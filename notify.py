@@ -1,5 +1,6 @@
 import os
 import re
+import html as html_lib
 import requests
 
 from linebot.v3.messaging import (
@@ -24,39 +25,30 @@ def get_gold_price():
     )
     res.raise_for_status()
 
-    html = res.text
+    html = html_lib.unescape(res.text)
+
+    text = re.sub(r"<[^>]+>", " ", html)
+    text = re.sub(r"\s+", " ", text)
 
     def find_price(k):
-        # หา pattern เช่น 24K ... ฿ 4,917.70
-        pattern = rf"{k}\s*.*?฿\s*([\d,]+\.\d+)"
-        match = re.search(pattern, html, re.IGNORECASE | re.DOTALL)
+        pattern = rf"ราคาทองต่อกรัม\s*{k}\s*฿\s*([\d,]+\.\d+)"
+        match = re.search(pattern, text, re.IGNORECASE)
 
         if match:
             return f"฿ {match.group(1)}"
 
         return "ไม่พบ"
 
-    prices = {
-        "24K": find_price("24K"),
-        "22K": find_price("22K"),
-        "21K": find_price("21K"),
-        "20K": find_price("20K"),
-        "18K": find_price("18K"),
-        "14K": find_price("14K"),
-        "10K": find_price("10K"),
-        "9K": find_price("9K"),
-    }
+    return f"""📊 แจ้งเตือนราคาทองต่อกรัมประจำวัน
 
-    return f"""📊 ราคาทองต่อกรัมวันนี้
-
-24K: {prices["24K"]}
-22K: {prices["22K"]}
-21K: {prices["21K"]}
-20K: {prices["20K"]}
-18K: {prices["18K"]}
-14K: {prices["14K"]}
-10K: {prices["10K"]}
-9K: {prices["9K"]}
+24K: {find_price("24K")}
+22K: {find_price("22K")}
+21K: {find_price("21K")}
+20K: {find_price("20K")}
+18K: {find_price("18K")}
+14K: {find_price("14K")}
+10K: {find_price("10K")}
+9K: {find_price("9K")}
 
 อ้างอิง: Talupa
 {url}
