@@ -26,6 +26,9 @@ from linebot.v3.exceptions import InvalidSignatureError
 
 app = Flask(__name__)
 
+# =========================
+# ENV
+# =========================
 LINE_CHANNEL_SECRET = os.environ.get("LINE_CHANNEL_SECRET")
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
@@ -45,11 +48,12 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 line_config = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 claude = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-SYSTEM_PROMPT = """คุณคือเลขาส่วนตัวของเจ้าของแบรนด์จิวเวลรี่ VIVIAN.GEMS
-ตอบภาษาไทย กระชับ ชัดเจน เป็นมืออาชีพ และช่วยจัดระบบงานให้ใช้งานได้จริง
-"""
+SYSTEM_PROMPT = "คุณคือเลขาส่วนตัว ตอบภาษาไทย กระชับ ชัดเจน"
 
 
+# =========================
+# GOLD PRICE
+# =========================
 def get_gold_price():
     url = "https://www.talupa.com/gold/Thailand"
 
@@ -86,50 +90,69 @@ def get_gold_price():
 """
 
 
+# =========================
+# GOOGLE SHEET SAVE
+# =========================
 def save_note_to_sheet(text):
-    if not GOOGLE_SHEET_ID:
-        raise RuntimeError("Missing GOOGLE_SHEET_ID")
+    try:
+        print("START SAVE")
 
-    if not GOOGLE_SERVICE_ACCOUNT_JSON:
-        raise RuntimeError("Missing GOOGLE_SERVICE_ACCOUNT_JSON")
+        if not GOOGLE_SHEET_ID:
+            raise RuntimeError("Missing GOOGLE_SHEET_ID")
 
-    service_account_info = json.loads(GOOGLE_SERVICE_ACCOUNT_JSON)
+        if not GOOGLE_SERVICE_ACCOUNT_JSON:
+            raise RuntimeError("Missing GOOGLE_SERVICE_ACCOUNT_JSON")
 
-    scopes = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
-    ]
+        service_account_info = json.loads(GOOGLE_SERVICE_ACCOUNT_JSON)
 
-    creds = Credentials.from_service_account_info(
-        service_account_info,
-        scopes=scopes
-    )
+        creds = Credentials.from_service_account_info(
+            service_account_info,
+            scopes=[
+                "https://www.googleapis.com/auth/spreadsheets",
+                "https://www.googleapis.com/auth/drive"
+            ]
+        )
 
-    client = gspread.authorize(creds)
-    sheet = client.open_by_key(GOOGLE_SHEET_ID)
-    worksheet = sheet.worksheet("Notes")
+        client = gspread.authorize(creds)
 
-    worksheet.append_row([
-        text,
-        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    ])
+        print("OPEN SHEET")
+        sheet = client.open_by_key(GOOGLE_SHEET_ID)
+
+        print("OPEN WORKSHEET")
+        worksheet = sheet.worksheet("Notes")
+
+        print("APPEND ROW")
+        worksheet.append_row([
+            text,
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ])
+
+        print("SUCCESS")
+
+    except Exception as e:
+        print("ERROR:", e)
+        raise e
 
 
+# =========================
+# CLAUDE
+# =========================
 def ask_claude(user_msg):
     response = claude.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=700,
+        max_tokens=500,
         system=SYSTEM_PROMPT,
-        messages=[
-            {"role": "user", "content": user_msg}
-        ]
+        messages=[{"role": "user", "content": user_msg}]
     )
     return response.content[0].text
 
 
+# =========================
+# ROUTES
+# =========================
 @app.route("/", methods=["GET"])
 def home():
-    return "VIVIAN Secretary Bot is running", 200
+    return "Bot running", 200
 
 
 @app.route("/callback", methods=["POST"])
@@ -153,6 +176,9 @@ def callback():
     return "OK", 200
 
 
+# =========================
+# LINE HANDLER
+# =========================
 @handler.add(MessageEvent, message=TextMessageContent)
 def handle_message(event):
     user_msg = event.message.text.strip()
@@ -162,7 +188,7 @@ def handle_message(event):
 
     try:
         if user_msg.lower() == "userid":
-            reply_text = f"USER_ID:\n{event.source.user_id}"
+            reply_text = event.source.user_id
 
         elif "ขอราคาทอง" in user_msg or "ราคาทอง" in user_msg:
             reply_text = get_gold_price()
@@ -176,7 +202,7 @@ def handle_message(event):
 
     except Exception:
         traceback.print_exc()
-        reply_text = "❌ ระบบมีปัญหาชั่วคราว กรุณาเช็ค Render Logs ครับ"
+        reply_text = "❌ บันทึกไม่สำเร็จ กรุณาเช็ค Render Logs"
 
     with ApiClient(line_config) as api_client:
         line_bot = MessagingApi(api_client)
@@ -188,8 +214,8 @@ def handle_message(event):
         )
 
 
+# =========================
+# RUN
+# =========================
 if __name__ == "__main__":
-    app.run(
-        host="0.0.0.0",
-        port=int(os.environ.get("PORT", 5000))
-    )
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
