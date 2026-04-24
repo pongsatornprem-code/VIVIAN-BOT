@@ -2,3 +2,7 @@ flask
 line-bot-sdk==3.*
 anthropic>=0.34.0
 gunicorn
+gspread
+google-auth
+requests
+beautifulsoup4
