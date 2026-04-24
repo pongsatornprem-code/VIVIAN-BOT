@@ -45,17 +45,20 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 line_config = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 claude = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-SYSTEM_PROMPT = """คุณคือเลขาส่วนตัวของเจ้าของแบรนด์จิวเวลรี่ VIVIAN.GEMS
-ตอบภาษาไทย กระชับ ชัดเจน เป็นมืออาชีพ
-"""
+SYSTEM_PROMPT = "คุณคือเลขาส่วนตัว ตอบภาษาไทย กระชับ ชัดเจน"
 
 
 # =========================
-# GOOGLE SHEET
+# GOOGLE SHEET FUNCTION
 # =========================
 def save_note_to_sheet(text):
-    if not GOOGLE_SHEET_ID or not GOOGLE_SERVICE_ACCOUNT_JSON:
-        return
+    print("👉 START save_note_to_sheet")
+
+    if not GOOGLE_SHEET_ID:
+        raise RuntimeError("Missing GOOGLE_SHEET_ID")
+
+    if not GOOGLE_SERVICE_ACCOUNT_JSON:
+        raise RuntimeError("Missing GOOGLE_SERVICE_ACCOUNT_JSON")
 
     service_account_info = json.loads(GOOGLE_SERVICE_ACCOUNT_JSON)
 
@@ -70,13 +73,20 @@ def save_note_to_sheet(text):
     )
 
     client = gspread.authorize(creds)
-    sheet = client.open_by_key(GOOGLE_SHEET_ID)
-    worksheet = sheet.worksheet("Notes")
 
+    print("👉 Open sheet")
+    sheet = client.open_by_key(GOOGLE_SHEET_ID)
+
+    print("👉 Open worksheet: Notes")
+    worksheet = sheet.worksheet("Notes")  # ต้องชื่อ Notes เท่านั้น
+
+    print("👉 Append row")
     worksheet.append_row([
         text,
         datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     ])
+
+    print("✅ SAVE SUCCESS")
 
 
 # =========================
@@ -87,7 +97,9 @@ def ask_claude(user_msg):
         model="claude-sonnet-4-6",
         max_tokens=500,
         system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_msg}]
+        messages=[
+            {"role": "user", "content": user_msg}
+        ]
     )
     return response.content[0].text
 
@@ -104,6 +116,8 @@ def home():
 def callback():
     signature = request.headers.get("X-Line-Signature")
     body = request.get_data(as_text=True)
+
+    print("BODY:", body)
 
     if not signature:
         abort(400)
@@ -126,15 +140,18 @@ def callback():
 def handle_message(event):
     user_msg = event.message.text.strip()
 
+    print("USER_ID:", event.source.user_id)
+    print("MESSAGE:", user_msg)
+
     try:
-        # 🔥 คำสั่งดู USER ID
+        # 🔥 ดู USER ID
         if user_msg == "userid":
             reply_text = f"USER_ID:\n{event.source.user_id}"
 
-        # 🔥 คำสั่งจด
+        # 🔥 บันทึกลง Google Sheet
         elif "จด" in user_msg:
             save_note_to_sheet(user_msg)
-            reply_text = "บันทึกเรียบร้อยครับ"
+            reply_text = "บันทึกลง Google Sheet เรียบร้อยครับ"
 
         # 🔥 ปกติใช้ AI
         else:
@@ -142,7 +159,7 @@ def handle_message(event):
 
     except Exception:
         traceback.print_exc()
-        reply_text = "ระบบมีปัญหาชั่วคราว"
+        reply_text = "❌ บันทึกไม่สำเร็จ หรือระบบมีปัญหา"
 
     with ApiClient(line_config) as api_client:
         line_bot = MessagingApi(api_client)
@@ -150,8 +167,6 @@ def handle_message(event):
             ReplyMessageRequest(
                 reply_token=event.reply_token,
                 messages=[TextMessage(text=reply_text)]
-                if event.message.text == "userid":
-    reply_text = event.source.user_id
             )
         )
 
@@ -160,4 +175,7 @@ def handle_message(event):
 # RUN
 # =========================
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    app.run(
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 5000))
+    )
