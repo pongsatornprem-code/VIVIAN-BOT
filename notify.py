@@ -1,6 +1,5 @@
 import os
 import requests
-from bs4 import BeautifulSoup
 
 from linebot.v3.messaging import (
     Configuration,
@@ -9,7 +8,6 @@ from linebot.v3.messaging import (
     PushMessageRequest,
     TextMessage
 )
-
 
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_USER_ID = os.environ.get("LINE_USER_ID")
@@ -22,22 +20,13 @@ def get_gold_price_from_talupa():
         response = requests.get(
             url,
             timeout=15,
-            headers={
-                "User-Agent": "Mozilla/5.0"
-            }
+            headers={"User-Agent": "Mozilla/5.0"}
         )
         response.raise_for_status()
 
-        soup = BeautifulSoup(response.text, "html.parser")
-        text = soup.get_text("\n", strip=True)
+        text = response.text
 
-        # ดึงแบบกว้างก่อน เพื่อเช็คว่าเว็บตอบข้อมูลกลับมาจริง
-        lines = [line for line in text.split("\n") if "บาท" in line or "ทอง" in line]
-
-        if lines:
-            return "\n".join(lines[:10])
-
-        return "ดึงข้อมูลจาก Talupa ได้ แต่ยังอ่านราคาทองไม่เจอ"
+        return f"ดึงข้อมูล Talupa ได้แล้วครับ\n\nความยาวข้อมูล: {len(text)} ตัวอักษร\n\nเช็กราคาได้ที่:\n{url}"
 
     except Exception as e:
         return f"ดึงราคาทองจาก Talupa ไม่สำเร็จ: {e}"
@@ -51,9 +40,7 @@ def push_line_message(text):
         line_bot.push_message(
             PushMessageRequest(
                 to=LINE_USER_ID,
-                messages=[
-                    TextMessage(text=text)
-                ]
+                messages=[TextMessage(text=text)]
             )
         )
 
@@ -61,11 +48,9 @@ def push_line_message(text):
 if __name__ == "__main__":
     gold_data = get_gold_price_from_talupa()
 
-    message = f"""สรุปราคาทองประจำวัน
+    message = f"""แจ้งเตือนราคาทองประจำวัน
 
 {gold_data}
-
-ที่มา: Talupa
 """
 
     push_line_message(message)
