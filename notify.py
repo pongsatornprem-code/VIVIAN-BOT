@@ -1,4 +1,5 @@
 import os
+import re
 import requests
 
 from linebot.v3.messaging import (
@@ -13,26 +14,62 @@ LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_USER_ID = os.environ.get("LINE_USER_ID")
 
 
-def get_gold_price_from_talupa():
+def get_gold_price():
     url = "https://www.talupa.com/gold/Thailand"
 
-    try:
-        response = requests.get(
-            url,
-            timeout=15,
-            headers={"User-Agent": "Mozilla/5.0"}
-        )
-        response.raise_for_status()
+    res = requests.get(
+        url,
+        headers={"User-Agent": "Mozilla/5.0"},
+        timeout=15
+    )
+    res.raise_for_status()
 
-        text = response.text
+    html = res.text
 
-        return f"ดึงข้อมูล Talupa ได้แล้วครับ\n\nความยาวข้อมูล: {len(text)} ตัวอักษร\n\nเช็กราคาได้ที่:\n{url}"
+    def find_price(k):
+        # หา pattern เช่น 24K ... ฿ 4,917.70
+        pattern = rf"{k}\s*.*?฿\s*([\d,]+\.\d+)"
+        match = re.search(pattern, html, re.IGNORECASE | re.DOTALL)
 
-    except Exception as e:
-        return f"ดึงราคาทองจาก Talupa ไม่สำเร็จ: {e}"
+        if match:
+            return f"฿ {match.group(1)}"
+
+        return "ไม่พบ"
+
+    prices = {
+        "24K": find_price("24K"),
+        "22K": find_price("22K"),
+        "21K": find_price("21K"),
+        "20K": find_price("20K"),
+        "18K": find_price("18K"),
+        "14K": find_price("14K"),
+        "10K": find_price("10K"),
+        "9K": find_price("9K"),
+    }
+
+    return f"""📊 ราคาทองต่อกรัมวันนี้
+
+24K: {prices["24K"]}
+22K: {prices["22K"]}
+21K: {prices["21K"]}
+20K: {prices["20K"]}
+18K: {prices["18K"]}
+14K: {prices["14K"]}
+10K: {prices["10K"]}
+9K: {prices["9K"]}
+
+อ้างอิง: Talupa
+{url}
+"""
 
 
 def push_line_message(text):
+    if not LINE_CHANNEL_ACCESS_TOKEN:
+        raise RuntimeError("Missing LINE_CHANNEL_ACCESS_TOKEN")
+
+    if not LINE_USER_ID:
+        raise RuntimeError("Missing LINE_USER_ID")
+
     config = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 
     with ApiClient(config) as api_client:
@@ -46,11 +83,5 @@ def push_line_message(text):
 
 
 if __name__ == "__main__":
-    gold_data = get_gold_price_from_talupa()
-
-    message = f"""แจ้งเตือนราคาทองประจำวัน
-
-{gold_data}
-"""
-
+    message = get_gold_price()
     push_line_message(message)
