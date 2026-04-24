@@ -150,6 +150,8 @@ def handle_message(event):
             ReplyMessageRequest(
                 reply_token=event.reply_token,
                 messages=[TextMessage(text=reply_text)]
+                if event.message.text == "userid":
+    reply_text = event.source.user_id
             )
         )
 
