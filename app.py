@@ -2,8 +2,8 @@ import os
 import json
 import re
 import html as html_lib
-import traceback
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import requests
 import anthropic
@@ -26,9 +26,6 @@ from linebot.v3.exceptions import InvalidSignatureError
 
 app = Flask(__name__)
 
-# =========================
-# ENV
-# =========================
 LINE_CHANNEL_SECRET = os.environ.get("LINE_CHANNEL_SECRET")
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
@@ -42,15 +39,20 @@ claude = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 SYSTEM_PROMPT = "คุณคือเลขาส่วนตัว ตอบภาษาไทย กระชับ ชัดเจน"
 
 
-# =========================
-# GOLD PRICE
-# =========================
+def thai_now():
+    return datetime.now(ZoneInfo("Asia/Bangkok")).strftime("%Y-%m-%d %H:%M:%S TH")
+
+
 def get_gold_price():
     url = "https://www.talupa.com/gold/Thailand"
 
-    res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
-    raw_html = html_lib.unescape(res.text)
+    res = requests.get(
+        url,
+        headers={"User-Agent": "Mozilla/5.0"},
+        timeout=15
+    )
 
+    raw_html = html_lib.unescape(res.text)
     text = re.sub(r"<[^>]+>", " ", raw_html)
     text = re.sub(r"\s+", " ", text)
 
@@ -59,19 +61,23 @@ def get_gold_price():
         match = re.search(pattern, text, re.IGNORECASE)
         return f"฿ {match.group(1)}" if match else "ไม่พบ"
 
-    return f"""📊 ราคาทองล่าสุด
+    return f"""📊 ราคาทองต่อกรัมล่าสุด
+เวลาอัปเดต: {thai_now()}
 
 24K: {find_price("24K")}
 22K: {find_price("22K")}
+21K: {find_price("21K")}
+20K: {find_price("20K")}
 18K: {find_price("18K")}
 14K: {find_price("14K")}
 10K: {find_price("10K")}
+9K: {find_price("9K")}
+
+อ้างอิง: Talupa
+{url}
 """
 
 
-# =========================
-# GOOGLE SHEET
-# =========================
 def save_note_to_sheet(text):
     if not GOOGLE_SHEET_ID:
         raise RuntimeError("Missing GOOGLE_SHEET_ID")
@@ -95,26 +101,27 @@ def save_note_to_sheet(text):
 
     worksheet.append_row([
         text,
-        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        thai_now()
     ])
 
 
-# =========================
-# CLAUDE
-# =========================
 def ask_claude(user_msg):
     response = claude.messages.create(
         model="claude-sonnet-4-6",
         max_tokens=500,
         system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_msg}]
+        messages=[
+            {"role": "user", "content": user_msg}
+        ]
     )
     return response.content[0].text
 
 
-# =========================
-# ROUTE
-# =========================
+@app.route("/", methods=["GET"])
+def home():
+    return "Bot running", 200
+
+
 @app.route("/callback", methods=["POST"])
 def callback():
     signature = request.headers.get("X-Line-Signature")
@@ -128,30 +135,27 @@ def callback():
     return "OK"
 
 
-# =========================
-# LINE
-# =========================
 @handler.add(MessageEvent, message=TextMessageContent)
 def handle_message(event):
     user_msg = event.message.text.strip()
 
     try:
-        # 🔥 เช็ค ENV
         if user_msg == "env":
-            reply_text = f"""
+            reply_text = f"""ENV CHECK
 GOOGLE_SHEET_ID: {bool(GOOGLE_SHEET_ID)}
 JSON: {bool(GOOGLE_SERVICE_ACCOUNT_JSON)}
+เวลาไทย: {thai_now()}
 """
 
-        elif user_msg == "userid":
+        elif user_msg.lower() == "userid":
             reply_text = event.source.user_id
 
         elif "ราคาทอง" in user_msg:
             reply_text = get_gold_price()
 
-        elif "จด" in user_msg:
+        elif "จด" in user_msg or "บันทึก" in user_msg:
             save_note_to_sheet(user_msg)
-            reply_text = "บันทึกเรียบร้อย"
+            reply_text = f"บันทึกเรียบร้อยครับ\nเวลาไทย: {thai_now()}"
 
         else:
             reply_text = ask_claude(user_msg)
@@ -160,7 +164,8 @@ JSON: {bool(GOOGLE_SERVICE_ACCOUNT_JSON)}
         reply_text = f"❌ ERROR:\n{type(e).__name__}\n{str(e)}"
 
     with ApiClient(line_config) as api_client:
-        MessagingApi(api_client).reply_message(
+        line_bot = MessagingApi(api_client)
+        line_bot.reply_message(
             ReplyMessageRequest(
                 reply_token=event.reply_token,
                 messages=[TextMessage(text=reply_text)]
@@ -168,8 +173,8 @@ JSON: {bool(GOOGLE_SERVICE_ACCOUNT_JSON)}
         )
 
 
-# =========================
-# RUN
-# =========================
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    app.run(
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 5000))
+    )
