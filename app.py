@@ -91,7 +91,9 @@ def handle_message(event):
             line_bot.reply_message(
                 ReplyMessageRequest(
                     reply_token=event.reply_token,
-                    messages=[TextMessage(text=reply_text)]
+                    messages=[
+                        TextMessage(text=reply_text)
+                    ]
                 )
             )
     except Exception:
