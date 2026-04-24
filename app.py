@@ -91,47 +91,42 @@ def get_gold_price():
 
 
 # =========================
-# GOOGLE SHEET SAVE
+# GOOGLE SHEET
 # =========================
 def save_note_to_sheet(text):
-    try:
-        print("START SAVE")
+    print("START SAVE", flush=True)
 
-        if not GOOGLE_SHEET_ID:
-            raise RuntimeError("Missing GOOGLE_SHEET_ID")
+    if not GOOGLE_SHEET_ID:
+        raise RuntimeError("Missing GOOGLE_SHEET_ID")
 
-        if not GOOGLE_SERVICE_ACCOUNT_JSON:
-            raise RuntimeError("Missing GOOGLE_SERVICE_ACCOUNT_JSON")
+    if not GOOGLE_SERVICE_ACCOUNT_JSON:
+        raise RuntimeError("Missing GOOGLE_SERVICE_ACCOUNT_JSON")
 
-        service_account_info = json.loads(GOOGLE_SERVICE_ACCOUNT_JSON)
+    service_account_info = json.loads(GOOGLE_SERVICE_ACCOUNT_JSON)
 
-        creds = Credentials.from_service_account_info(
-            service_account_info,
-            scopes=[
-                "https://www.googleapis.com/auth/spreadsheets",
-                "https://www.googleapis.com/auth/drive"
-            ]
-        )
+    creds = Credentials.from_service_account_info(
+        service_account_info,
+        scopes=[
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+    )
 
-        client = gspread.authorize(creds)
+    client = gspread.authorize(creds)
 
-        print("OPEN SHEET")
-        sheet = client.open_by_key(GOOGLE_SHEET_ID)
+    print("OPEN SHEET", flush=True)
+    sheet = client.open_by_key(GOOGLE_SHEET_ID)
 
-        print("OPEN WORKSHEET")
-        worksheet = sheet.worksheet("Notes")
+    print("OPEN WORKSHEET", flush=True)
+    worksheet = sheet.worksheet("Notes")
 
-        print("APPEND ROW")
-        worksheet.append_row([
-            text,
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        ])
+    print("APPEND ROW", flush=True)
+    worksheet.append_row([
+        text,
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ])
 
-        print("SUCCESS")
-
-    except Exception as e:
-        print("ERROR:", e)
-        raise e
+    print("SUCCESS", flush=True)
 
 
 # =========================
@@ -160,7 +155,7 @@ def callback():
     signature = request.headers.get("X-Line-Signature")
     body = request.get_data(as_text=True)
 
-    print("BODY:", body)
+    print("BODY:", body, flush=True)
 
     if not signature:
         abort(400)
@@ -183,8 +178,8 @@ def callback():
 def handle_message(event):
     user_msg = event.message.text.strip()
 
-    print("USER_ID:", event.source.user_id)
-    print("MESSAGE:", user_msg)
+    print("USER_ID:", event.source.user_id, flush=True)
+    print("MESSAGE:", user_msg, flush=True)
 
     try:
         if user_msg.lower() == "userid":
@@ -195,14 +190,14 @@ def handle_message(event):
 
         elif "จด" in user_msg or "บันทึก" in user_msg:
             save_note_to_sheet(user_msg)
-            reply_text = "บันทึกลง Google Sheet เรียบร้อยครับ"
+            reply_text = "บันทึกเรียบร้อยครับ"
 
         else:
             reply_text = ask_claude(user_msg)
 
-    except Exception:
+    except Exception as e:
         traceback.print_exc()
-        reply_text = "❌ บันทึกไม่สำเร็จ กรุณาเช็ค Render Logs"
+        reply_text = f"❌ ERROR:\n{type(e).__name__}\n{str(e)}"
 
     with ApiClient(line_config) as api_client:
         line_bot = MessagingApi(api_client)
@@ -218,4 +213,7 @@ def handle_message(event):
 # RUN
 # =========================
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    app.run(
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 5000))
+    )
