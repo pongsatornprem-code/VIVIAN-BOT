@@ -40,8 +40,27 @@ claude = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 SYSTEM_PROMPT = """
 คุณคือเลขาส่วนตัวของเจ้าของแบรนด์จิวเวลรี่ VIVIAN.GEMS
 ตอบภาษาไทย กระชับ ชัดเจน เป็นมืออาชีพ
-ช่วยจัดการลูกค้า งาน follow-up งานผลิต และการคำนวณต้นทุนทอง
+ช่วยจัดการลูกค้า งาน follow-up งานผลิต ต้นทุนทอง และข้อมูลเพชร
 """
+
+
+ROUND_DIAMOND_CHART = {
+    0.8: 0.0025, 1.0: 0.005, 1.1: 0.0067, 1.2: 0.009,
+    1.25: 0.01, 1.3: 0.01, 1.5: 0.015, 1.75: 0.02,
+    1.8: 0.025, 2.0: 0.03, 2.2: 0.04, 2.5: 0.06,
+    2.75: 0.08, 3.0: 0.10, 3.25: 0.14, 3.5: 0.17,
+    3.75: 0.21, 4.0: 0.25, 4.25: 0.28, 4.5: 0.36,
+    4.75: 0.44, 5.0: 0.50, 5.25: 0.56, 5.5: 0.66,
+    5.75: 0.75, 6.0: 0.84, 6.25: 0.93, 6.5: 1.00,
+    6.8: 1.25, 7.0: 1.30, 7.3: 1.50, 7.5: 1.67,
+    7.75: 1.75, 8.0: 2.00, 8.25: 2.11, 8.5: 2.43,
+    8.7: 2.50, 9.0: 2.75, 9.1: 3.00, 9.5: 3.35,
+    9.75: 3.50, 10.0: 3.87, 10.25: 4.00, 10.5: 4.41,
+    10.75: 4.50, 11.0: 5.00, 11.25: 5.49, 11.5: 5.85,
+    12.0: 6.84, 12.25: 7.26, 12.5: 7.36, 12.75: 7.52,
+    13.0: 8.51, 13.5: 9.53, 14.0: 10.49, 15.0: 12.89,
+    16.0: 16.06,
+}
 
 
 def thai_now():
@@ -353,6 +372,39 @@ def calculate_cost(msg):
 """
 
 
+def diamond_round_weight(msg):
+    match = re.search(r"([\d.]+)", msg)
+
+    if not match:
+        return """พิมพ์แบบนี้ครับ:
+
+เพชร 6.5
+หรือ
+เพชร round 6.5
+"""
+
+    size = float(match.group(1))
+
+    if size in ROUND_DIAMOND_CHART:
+        ct = ROUND_DIAMOND_CHART[size]
+        return f"""💎 ประมาณน้ำหนักเพชร Round
+
+ขนาด: {size} mm
+น้ำหนักโดยประมาณ: {ct} ct
+"""
+
+    closest = min(ROUND_DIAMOND_CHART.keys(), key=lambda x: abs(x - size))
+    ct = ROUND_DIAMOND_CHART[closest]
+
+    return f"""💎 ไม่พบขนาด {size} mm ตรงเป๊ะ
+
+ขนาดใกล้เคียงที่สุด:
+{closest} mm ≈ {ct} ct
+
+หมายเหตุ: เป็นน้ำหนักโดยประมาณสำหรับเพชรทรง Round
+"""
+
+
 def ask_ai(msg):
     response = claude.messages.create(
         model="claude-sonnet-4-6",
@@ -441,12 +493,19 @@ follow วันนี้
 9) คำนวณต้นทุนทอง
 คำนวณ 18K 3.2g ค่าแรง 6500 margin 40
 
+10) เช็กน้ำหนักเพชร Round
+เพชร 6.5
+เพชร round 6.5
+
 หมายเหตุ:
 ระบบคำนวณทองจะบวก buffer +100 บาท/กรัมจากราคาเว็บก่อนประเมินราคา
 """
 
         elif "ราคาทอง" in msg:
             reply = get_gold_text()
+
+        elif msg.startswith("เพชร"):
+            reply = diamond_round_weight(msg)
 
         elif msg.startswith("จด") or msg.startswith("บันทึก"):
             save_note(msg)
