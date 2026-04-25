@@ -52,10 +52,6 @@ def thai_today():
     return datetime.now(ZoneInfo("Asia/Bangkok")).strftime("%Y-%m-%d")
 
 
-def thai_now_minute():
-    return datetime.now(ZoneInfo("Asia/Bangkok")).strftime("%Y-%m-%d %H:%M")
-
-
 def get_sheet():
     info = json.loads(GOOGLE_SERVICE_ACCOUNT_JSON)
     creds = Credentials.from_service_account_info(
@@ -69,12 +65,30 @@ def get_sheet():
     return client.open_by_key(GOOGLE_SHEET_ID)
 
 
+def normalize_datetime(text):
+    match_iso = re.search(r"\d{4}-\d{1,2}-\d{1,2}\s+\d{1,2}:\d{2}", text)
+    if match_iso:
+        dt = datetime.strptime(match_iso.group(0), "%Y-%m-%d %H:%M")
+        return dt.strftime("%Y-%m-%d %H:%M"), match_iso.group(0)
+
+    match_th = re.search(r"\d{1,2}[/-]\d{1,2}[/-]\d{4}\s+\d{1,2}:\d{2}", text)
+    if match_th:
+        raw = match_th.group(0)
+        date_part, time_part = raw.split()
+        date_part = date_part.replace("-", "/")
+        day, month, year = date_part.split("/")
+        hour, minute = time_part.split(":")
+        dt = datetime(int(year), int(month), int(day), int(hour), int(minute))
+        return dt.strftime("%Y-%m-%d %H:%M"), raw
+
+    return None, None
+
+
 def is_allowed(user_id):
     if user_id == ADMIN_USER_ID:
         return True
 
-    sheet = get_sheet()
-    ws = sheet.worksheet("Users")
+    ws = get_sheet().worksheet("Users")
     rows = ws.get_all_records()
 
     for row in rows:
@@ -109,15 +123,16 @@ def get_notes(limit=5):
 
 
 def add_task(msg):
-    # ตัวอย่าง: งาน โทรหาลูกค้าคุณแพร 2026-04-30 14:00
-    match = re.search(r"\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}", msg)
+    due, raw_date = normalize_datetime(msg)
 
-    if match:
-        due = match.group(0)
-        task = msg.replace("งาน", "", 1).replace(due, "").strip()
+    if due:
+        task = msg.replace("งาน", "", 1).replace(raw_date, "").strip()
     else:
         due = thai_today() + " 09:00"
         task = msg.replace("งาน", "", 1).strip()
+
+    if not task:
+        task = "ไม่ระบุงาน"
 
     ws = get_sheet().worksheet("Tasks")
     ws.append_row([task, due, "pending", thai_now()])
@@ -126,6 +141,9 @@ def add_task(msg):
 
 งาน: {task}
 เวลาเตือน: {due}
+
+ตัวอย่าง:
+งาน โทรหาลูกค้า 25/4/2026 13:00
 """
 
 
@@ -145,29 +163,33 @@ def today_tasks():
 
     reply = f"✅ งานวันนี้ ({today})\n\n"
     for i, row in enumerate(tasks, 1):
-        reply += f"{i}. {row.get('Task')} | {row.get('DueDateTime')}\n"
+        task_name = row.get("Task") or "ไม่ระบุงาน"
+        due_time = row.get("DueDateTime") or "-"
+        reply += f"{i}. {task_name} | {due_time}\n"
 
     return reply
 
 
 def add_customer(msg):
-    # ตัวอย่าง:
-    # ลูกค้า คุณแพร สนใจแหวนหยก งบ30000 follow2026-04-30 18:00
-
     name_match = re.search(r"ลูกค้า\s+(\S+)", msg)
     budget_match = re.search(r"งบ\s*([\d,]+)", msg)
-    follow_match = re.search(r"follow\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})", msg)
+    follow_time, raw_date = normalize_datetime(msg)
 
     name = name_match.group(1) if name_match else "-"
     budget = budget_match.group(1) if budget_match else "-"
-    follow_time = follow_match.group(1) if follow_match else "-"
+    follow_time = follow_time if follow_time else "-"
 
-    interest = msg
-    interest = interest.replace("ลูกค้า", "", 1)
+    interest = msg.replace("ลูกค้า", "", 1)
     interest = interest.replace(name, "", 1)
     interest = re.sub(r"งบ\s*[\d,]+", "", interest)
-    interest = re.sub(r"follow\s*\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}", "", interest)
-    interest = interest.strip()
+
+    if raw_date:
+        interest = interest.replace(raw_date, "")
+
+    interest = interest.replace("follow", "").strip()
+
+    if not interest:
+        interest = "-"
 
     ws = get_sheet().worksheet("Customers")
     ws.append_row([
@@ -186,6 +208,9 @@ def add_customer(msg):
 สนใจ: {interest}
 งบ: {budget}
 Follow-up: {follow_time}
+
+ตัวอย่าง:
+ลูกค้า คุณแพร สนใจแหวนหยก งบ30000 follow 25/4/2026 18:00
 """
 
 
@@ -276,33 +301,37 @@ def get_gold_number(karat):
     match = re.search(rf"{karat}K:\s*฿\s*([\d,]+\.\d+)", gold_text)
 
     if not match:
-        return None
+        return None, None
 
-    return float(match.group(1).replace(",", ""))
+    web_price = float(match.group(1).replace(",", ""))
+    estimate_price = web_price + 100
+
+    return web_price, estimate_price
 
 
 def calculate_cost(msg):
-    # ตัวอย่าง: คำนวณ 18K 3.2g ค่าแรง 6500 margin 40
-
     karat_match = re.search(r"(\d{1,2})K", msg, re.IGNORECASE)
     gram_match = re.search(r"([\d.]+)\s*g", msg, re.IGNORECASE)
     labor_match = re.search(r"ค่าแรง\s*([\d,]+)", msg)
     margin_match = re.search(r"margin\s*([\d.]+)", msg, re.IGNORECASE)
 
     if not karat_match or not gram_match:
-        return "พิมพ์แบบนี้ครับ:\nคำนวณ 18K 3.2g ค่าแรง 6500 margin 40"
+        return """พิมพ์แบบนี้ครับ:
+
+คำนวณ 18K 3.2g ค่าแรง 6500 margin 40
+"""
 
     karat = karat_match.group(1)
     gram = float(gram_match.group(1))
     labor = float(labor_match.group(1).replace(",", "")) if labor_match else 0
     margin = float(margin_match.group(1)) if margin_match else 40
 
-    price_per_gram = get_gold_number(karat)
+    web_price, estimate_price = get_gold_number(karat)
 
-    if not price_per_gram:
+    if not estimate_price:
         return f"ไม่พบราคาทอง {karat}K ครับ"
 
-    gold_cost = price_per_gram * gram
+    gold_cost = estimate_price * gram
     total_cost = gold_cost + labor
     sell_price = total_cost / (1 - margin / 100)
 
@@ -310,7 +339,10 @@ def calculate_cost(msg):
 
 ทอง: {karat}K
 น้ำหนัก: {gram}g
-ราคาทอง/กรัม: ฿ {price_per_gram:,.2f}
+
+ราคาทองหน้าเว็บ/กรัม: ฿ {web_price:,.2f}
+ราคาประเมินที่ใช้: ฿ {estimate_price:,.2f}
+(บวก buffer +100 บาท/กรัมแล้ว)
 
 ต้นทุนทอง: ฿ {gold_cost:,.2f}
 ค่าแรง: ฿ {labor:,.2f}
@@ -382,21 +414,35 @@ UserID:
         elif msg == "help":
             reply = """คำสั่งที่ใช้ได้
 
-userid
-env
-
+1) เช็คราคาทอง
 ราคาทอง
-จด ...
+
+2) จดบันทึก
+จด วันนี้ต้องถ่ายคลิป Ruby ring
+
+3) ดูบันทึก
 ดูบันทึก
 
-งาน โทรหาลูกค้า 2026-04-30 14:00
+4) เพิ่มงานพร้อมเวลาเตือน
+งาน โทรหาคุณแพร 25/4/2026 13:00
+
+5) ดูงานวันนี้
 งานวันนี้
 
-ลูกค้า คุณแพร สนใจแหวนหยก งบ30000 follow2026-04-30 18:00
+6) บันทึกลูกค้า + Follow-up
+ลูกค้า คุณแพร สนใจแหวนหยก งบ30000 follow 25/4/2026 18:00
+
+7) ค้นหาลูกค้า
 หา คุณแพร
+
+8) ดู follow-up วันนี้
 follow วันนี้
 
+9) คำนวณต้นทุนทอง
 คำนวณ 18K 3.2g ค่าแรง 6500 margin 40
+
+หมายเหตุ:
+ระบบคำนวณทองจะบวก buffer +100 บาท/กรัมจากราคาเว็บก่อนประเมินราคา
 """
 
         elif "ราคาทอง" in msg:
