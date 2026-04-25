@@ -171,23 +171,46 @@ def today_tasks():
     rows = ws.get_all_records()
     today = thai_today()
 
-    tasks = [
-        row for row in rows
-        if str(row.get("DueDateTime", "")).startswith(today)
-        and str(row.get("Status", "")).lower() != "done"
-    ]
+    tasks = []
+
+    for row in rows:
+        # อ่านเวลาแบบกันชื่อคอลัมน์ไม่ตรง
+        due_time = (
+            row.get("DueDateTime")
+            or row.get("Due Date Time")
+            or row.get("Due")
+            or row.get("เวลา")
+            or ""
+        )
+
+        status = str(row.get("Status") or row.get("สถานะ") or "").lower()
+
+        if str(due_time).startswith(today) and status != "done":
+            # อ่านชื่องานแบบกันหัวตารางไม่ตรง
+            task_name = (
+                row.get("Task")
+                or row.get("งาน")
+                or row.get("TaskName")
+                or next(iter(row.values()), "")
+            )
+
+            if not task_name:
+                task_name = "ไม่ระบุงาน"
+
+            tasks.append({
+                "task": task_name,
+                "due": due_time
+            })
 
     if not tasks:
         return "วันนี้ยังไม่มีงานค้างครับ"
 
     reply = f"✅ งานวันนี้ ({today})\n\n"
+
     for i, row in enumerate(tasks, 1):
-        task_name = row.get("Task") or "ไม่ระบุงาน"
-        due_time = row.get("DueDateTime") or "-"
-        reply += f"{i}. {task_name} | {due_time}\n"
+        reply += f"{i}. {row['task']} | {row['due']}\n"
 
     return reply
-
 
 def add_customer(msg):
     name_match = re.search(r"ลูกค้า\s+(\S+)", msg)
