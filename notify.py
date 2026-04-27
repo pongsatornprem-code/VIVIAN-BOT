@@ -2,12 +2,11 @@ import os
 import json
 import re
 import html as html_lib
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import requests
 import gspread
-
 from google.oauth2.service_account import Credentials
 
 from linebot.v3.messaging import (
@@ -26,19 +25,16 @@ GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
 
 
 def thai_now():
-    return datetime.now(ZoneInfo("Asia/Bangkok")).strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now(ZoneInfo("Asia/Bangkok"))
 
 
-def thai_today():
-    return datetime.now(ZoneInfo("Asia/Bangkok")).strftime("%Y-%m-%d")
-
-
-def thai_now_minute():
-    return datetime.now(ZoneInfo("Asia/Bangkok")).strftime("%Y-%m-%d %H:%M")
+def thai_now_text():
+    return thai_now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def get_sheet():
     info = json.loads(GOOGLE_SERVICE_ACCOUNT_JSON)
+
     creds = Credentials.from_service_account_info(
         info,
         scopes=[
@@ -46,6 +42,7 @@ def get_sheet():
             "https://www.googleapis.com/auth/drive"
         ]
     )
+
     client = gspread.authorize(creds)
     return client.open_by_key(GOOGLE_SHEET_ID)
 
@@ -69,6 +66,29 @@ def push_line(text):
         )
 
 
+def parse_datetime(value):
+    if not value:
+        return None
+
+    value = str(value).strip()
+
+    formats = [
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%d %H:%M:%S",
+        "%d/%m/%Y %H:%M",
+        "%d-%m-%Y %H:%M",
+    ]
+
+    for fmt in formats:
+        try:
+            dt = datetime.strptime(value[:19], fmt)
+            return dt.replace(tzinfo=ZoneInfo("Asia/Bangkok"))
+        except:
+            pass
+
+    return None
+
+
 def get_gold_text():
     url = "https://www.talupa.com/gold/Thailand"
 
@@ -90,7 +110,7 @@ def get_gold_text():
             return f"฿ {match.group(1)}" if match else "ไม่พบ"
 
         return f"""📊 ราคาทองวันนี้
-เวลาไทย: {thai_now()}
+เวลาไทย: {thai_now_text()}
 
 18K: {find_price("18K")}
 14K: {find_price("14K")}
@@ -101,102 +121,132 @@ def get_gold_text():
         return f"ดึงราคาทองไม่สำเร็จ: {e}"
 
 
-def check_tasks_now():
+def check_tasks():
     ws = get_sheet().worksheet("Tasks")
     rows = ws.get_all_records()
-    now = thai_now_minute()
 
+    now = thai_now()
     alerts = []
 
     for row in rows:
-        due = str(row.get("DueDateTime", ""))[:16]
-        status = str(row.get("Status", "")).lower()
+        task_name = (
+            row.get("Task")
+            or row.get("งาน")
+            or row.get("TaskName")
+            or row.get("รายละเอียด")
+            or ""
+        )
 
-        if due == now and status != "done":
-            alerts.append(row.get("Task"))
+        due_raw = (
+            row.get("DueDateTime")
+            or row.get("Due Date Time")
+            or row.get("Due")
+            or row.get("เวลา")
+            or ""
+        )
+
+        status = str(
+            row.get("Status")
+            or row.get("สถานะ")
+            or ""
+        ).lower()
+
+        if not task_name or not due_raw:
+            continue
+
+        if status == "done":
+            continue
+
+        due_time = parse_datetime(due_raw)
+
+        if not due_time:
+            continue
+
+        diff_min = (due_time - now).total_seconds() / 60
+
+        # แจ้งล่วงหน้า 10 นาที
+        if 5 < diff_min <= 10:
+            alerts.append(f"⏰ อีกประมาณ 10 นาที: {task_name} | {due_raw}")
+
+        # แจ้งตรงเวลา ภายในช่วง 0-5 นาทีหลังถึงเวลา
+        elif -5 <= diff_min <= 0:
+            alerts.append(f"🚨 ถึงเวลา: {task_name} | {due_raw}")
 
     return alerts
 
 
-def check_followups_now():
+def check_followups():
     ws = get_sheet().worksheet("Customers")
     rows = ws.get_all_records()
-    now = thai_now_minute()
 
+    now = thai_now()
     alerts = []
 
     for row in rows:
-        follow_time = str(row.get("FollowUpDateTime", ""))[:16]
+        name = row.get("Name") or row.get("ชื่อ") or ""
+        interest = row.get("Interest") or row.get("สนใจ") or ""
+        budget = row.get("Budget") or row.get("งบ") or "-"
+        follow_raw = (
+            row.get("FollowUpDateTime")
+            or row.get("Follow Up Date Time")
+            or row.get("FollowUp")
+            or row.get("เวลา")
+            or ""
+        )
 
-        if follow_time == now:
+        status = str(
+            row.get("Status")
+            or row.get("สถานะ")
+            or ""
+        ).lower()
+
+        if not follow_raw:
+            continue
+
+        if status == "done":
+            continue
+
+        follow_time = parse_datetime(follow_raw)
+
+        if not follow_time:
+            continue
+
+        diff_min = (follow_time - now).total_seconds() / 60
+
+        label = name if name else "ไม่ระบุชื่อ"
+
+        if 5 < diff_min <= 10:
             alerts.append(
-                f"{row.get('Name')} | {row.get('Interest')} | งบ {row.get('Budget')}"
+                f"⏰ อีกประมาณ 10 นาที: {label} | {interest} | งบ {budget} | {follow_raw}"
+            )
+
+        elif -5 <= diff_min <= 0:
+            alerts.append(
+                f"🚨 ถึงเวลา follow-up: {label} | {interest} | งบ {budget} | {follow_raw}"
             )
 
     return alerts
 
 
-def today_tasks_text():
-    ws = get_sheet().worksheet("Tasks")
-    rows = ws.get_all_records()
-    today = thai_today()
-
-    tasks = [
-        row for row in rows
-        if str(row.get("DueDateTime", "")).startswith(today)
-        and str(row.get("Status", "")).lower() != "done"
-    ]
-
-    if not tasks:
-        return "✅ วันนี้ยังไม่มีงานค้าง"
-
-    text = f"✅ งานวันนี้ ({today})\n"
-    for i, row in enumerate(tasks, 1):
-        text += f"{i}. {row.get('Task')} | {row.get('DueDateTime')}\n"
-
-    return text
-
-
-def follow_today_text():
-    ws = get_sheet().worksheet("Customers")
-    rows = ws.get_all_records()
-    today = thai_today()
-
-    followups = [
-        row for row in rows
-        if str(row.get("FollowUpDateTime", "")).startswith(today)
-    ]
-
-    if not followups:
-        return "🔔 วันนี้ยังไม่มี follow-up ลูกค้า"
-
-    text = f"🔔 Follow-up วันนี้ ({today})\n"
-    for row in followups:
-        text += f"- {row.get('Name')} | {row.get('Interest')} | งบ {row.get('Budget')} | {row.get('FollowUpDateTime')}\n"
-
-    return text
-
-
 if __name__ == "__main__":
-    task_alerts = check_tasks_now()
-    follow_alerts = check_followups_now()
+    task_alerts = check_tasks()
+    follow_alerts = check_followups()
 
-    if task_alerts or follow_alerts:
-        message = "🔔 แจ้งเตือนตามเวลา\n\n"
+    # ไม่มีอะไรต้องเตือน = ไม่ส่ง LINE
+    if not task_alerts and not follow_alerts:
+        print("No alerts at this time")
+        raise SystemExit
 
-        if task_alerts:
-            message += "งานที่ถึงเวลา:\n"
-            for task in task_alerts:
-                message += f"- {task}\n"
+    message = f"🔔 แจ้งเตือน VIVIAN\nเวลาไทย: {thai_now_text()}\n\n"
 
-        if follow_alerts:
-            message += "\nFollow-up ที่ถึงเวลา:\n"
-            for follow in follow_alerts:
-                message += f"- {follow}\n"
+    if task_alerts:
+        message += "📅 งาน:\n"
+        message += "\n".join(task_alerts)
+        message += "\n\n"
 
-        push_line(message)
+    if follow_alerts:
+        message += "👤 Follow-up ลูกค้า:\n"
+        message += "\n".join(follow_alerts)
+        message += "\n"
 
-    else:
-        # ถ้าอยากให้ส่งสรุปทุกครั้งที่ Cron รัน ให้ใช้ message นี้
-        # แต่ถ้า Cron ตั้งทุก 5 นาที ไม่แนะนำให้ส่งทุกครั้ง
-        print("No alerts at this minute")
+    push_line(message)
